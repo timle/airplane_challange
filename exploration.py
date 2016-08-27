@@ -1,66 +1,26 @@
 import pandas as pd
+import statsmodels
 import statsmodels.api as sm
 import numpy as np
 import matplotlib.pyplot as plt
 
 store = pd.HDFStore('2014_2016.h5') # generated with pre_process_data.py
-
 all_data = store.get('all_data')
 
 #convert datetime
 all_data.FlightDate = pd.to_datetime(all_data.FlightDate)
 
-# simple t-test
-
-is2015 = (all_data.FlightDate >= '2015-01-01') & (all_data.FlightDate < '2016-01-01')
-del_CarrierDelay = all_data.CarrierDelay.loc[(all_data.CarrierDelay>0) & is2015]
-del_WeatherDelay = all_data.WeatherDelay.loc[(all_data.WeatherDelay>0) & is2015]
-del_NASDelay = all_data.NASDelay.loc[(all_data.NASDelay>0) & is2015]
-del_SecurityDelay = all_data.SecurityDelay.loc[(all_data.SecurityDelay>0) & is2015]
-del_LateAircraftDelay = all_data.LateAircraftDelay.loc[(all_data.LateAircraftDelay>0) & is2015]
 
 
-np.average(del_CarrierDelay)
-np.average(del_WeatherDelay)
-np.average(del_NASDelay)
-np.average(del_SecurityDelay)
-np.average(del_LateAircraftDelay)
-#label delay type, stack dataframes
-# then can use apply...
+#plt.subplot(2, 1, 1)
+#plt.hist(np.log(del_CarrierDelay), bins='auto')  # plt.hist passes it's arguments to np.histogram
+#plt.title("del_car")
 
-np.max(del_CarrierDelay)
-np.max(del_WeatherDelay)
-np.max(del_NASDelay)
-np.max(del_SecurityDelay)
-np.max(del_LateAircraftDelay)
+#plt.subplot(2, 1, 2)
+#plt.hist(np.log(del_WeatherDelay), bins='auto')  # plt.hist passes it's arguments to np.histogram
+#plt.title("del_weath")
 
-np.sum(del_CarrierDelay)/60/24
-np.sum(del_WeatherDelay)/60/24
-np.sum(del_NASDelay)/60/24
-np.sum(del_SecurityDelay)/60/24
-np.sum(del_LateAircraftDelay)/60/24
-
-
-len(del_CarrierDelay) - (np.sum(del_CarrierDelay <= 30))
-len(del_WeatherDelay) - (np.sum(del_WeatherDelay <= 30))
-
-
-sum(del_CarrierDelay)
-sum(del_WeatherDelay)
-
-len(del_CarrierDelay) # 570022 incidents
-len(del_WeatherDelay) # 64716 incidents
-
-
-plt.subplot(2, 1, 1)
-plt.hist(np.log(del_CarrierDelay), bins='auto')  # plt.hist passes it's arguments to np.histogram
-plt.title("del_car")
-
-plt.subplot(2, 1, 2)
-plt.hist(np.log(del_WeatherDelay), bins='auto')  # plt.hist passes it's arguments to np.histogram
-plt.title("del_weath")
-
-plt.show()
+#plt.show()
 
 
 # subset 2015 only, has delay, and following columns:
@@ -82,6 +42,9 @@ sub_dat['is_weekday_dep'] = sub_dat.FlightDate.dt.dayofweek < 5  #Saturday=5, Su
 sub_dat['month'] = sub_dat.FlightDate.dt.month
 
 
+
+
+# biased towards when delays occur
 cols = list(sub_dat.columns.values)
 delay_cols = ['CarrierDelay',  'WeatherDelay',  'NASDelay',  'SecurityDelay',  'LateAircraftDelay']
 base_cols = list(set(cols) - set(delay_cols))
@@ -95,6 +58,52 @@ for cur_col in delay_cols:
     df_subset['delayType'] = cur_col
     df_subset['delayAmnt'] = delay_subset
     stacked = pd.concat([stacked, df_subset], ignore_index=True)
+
+stacked['delay_by_dist'] = stacked.delayAmnt / stacked.Distance
+
+agg_fun_1 = {'delayAmnt': {'delay': [np.sum, np.mean, np.median, np.std]},
+           'Distance': {'dist': [np.sum, np.mean, np.median, np.std, len]}}
+
+agg_fun_2 = {'delayAmnt': {'delay': [np.sum, np.mean, np.median, np.std]},
+           'delay_by_dist': {'D_by_D': [np.mean, np.median, np.std, len]}}
+
+stacked.groupby('delayType', axis=0).agg(agg_fun_2)
+# given trip of n kilometers, what kind of delay is likely to happen
+# this excludes all trips with no delays.
+# what is happening, carrier delays are more common, but less severe.
+# this means more trips have carrier delays,
+# but there is issue with bias in here? only picking trips with a delay?
+
+
+
+
+# non-biased
+cols = list(sub_dat.columns.values)
+delay_cols = ['CarrierDelay',  'WeatherDelay',  'NASDelay',  'SecurityDelay',  'LateAircraftDelay']
+base_cols = list(set(cols) - set(delay_cols))
+stacked2 = pd.DataFrame([])
+for cur_col in delay_cols:
+    # clean up variable names
+    # make purpose of loop explicit
+    df_subset = sub_dat[base_cols].loc
+    delay_subset = sub_dat[cur_col].loc
+    df_subset['delayType'] = cur_col
+    df_subset['delayAmnt'] = delay_subset
+    stacked = pd.concat([stacked, df_subset], ignore_index=True)
+
+stacked['delay_by_dist'] = stacked.delayAmnt / stacked.Distance
+
+agg_fun_1 = {'delayAmnt': {'delay': [np.sum, np.mean, np.median, np.std]},
+           'Distance': {'dist': [np.sum, np.mean, np.median, np.std, len]}}
+
+agg_fun_2 = {'delayAmnt': {'delay': [np.sum, np.mean, np.median, np.std]},
+           'delay_by_dist': {'D_by_D': [np.sum, np.mean, np.median, np.std, len]}}
+
+stacked.groupby('delayType', axis=0).agg(agg_fun_2)
+
+
+
+
 
 # stacked will make some statistics easier, but keep in mind that flights are repeated.
 
