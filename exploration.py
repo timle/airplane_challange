@@ -2,16 +2,26 @@ import pandas as pd
 import statsmodels
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
+import statsmodels.stats.multitest as smm
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+import random
+import seaborn as sns
+sns.set(font_scale=1.5)
 
+# h5 dataset
 store = pd.HDFStore('2014_2016.h5') # generated with pre_process_data.py
 all_data = store.get('all_data')
 
+# airplane carrier ids
+airplane_ids = pd.read_csv('airplane_challange/data/L_AIRLINE_ID.csv')
+
+all_data = pd.merge(all_data, airplane_ids, how='left', left_on='AirlineID', right_on='Code')
+
+
 #convert datetime
 all_data.FlightDate = pd.to_datetime(all_data.FlightDate)
-
 
 
 #plt.subplot(2, 1, 1)
@@ -37,7 +47,7 @@ cols = list(all_data.columns.values)
 
 
 
-sub_cols = ['FlightDate', 'AirlineID', 'TailNum', 'OriginAirportID', 'OriginCityMarketID', 'DestAirportID',
+sub_cols = ['FlightDate', 'AirlineID', 'Description', 'TailNum', 'OriginAirportID', 'OriginCityMarketID', 'DestAirportID',
             'DestCityMarketID', 'CRSDepTime', 'DepDelay',  'CRSArrTime', 'ArrTime', 'ArrDelay', 'Cancelled',
             'CancellationCode', 'Diverted', 'Distance', 'CarrierDelay', 'WeatherDelay', 'NASDelay', 'SecurityDelay',
             'LateAircraftDelay', 'is_morning_dep', 'is_weekday_dep', 'month', 'quarter' ]
@@ -74,13 +84,15 @@ stacked = pd.concat([df_subset, stacked], ignore_index=True)
 
 # stacked['delay_by_dist'] = stacked.delayAmnt / stacked.Distance
 
-agg_fun_1 = {'delayAmnt': {'delay': [np.sum, np.mean, np.median, np.std]},
+agg_fun_1 = {'delayAmnt': {'delay': [np.sum, np.mean, np.median, np.std, len]},
            'Distance': {'dist': [np.sum, np.mean, np.median, np.std, len]}}
 
 agg_fun_2 = {'delayAmnt': {'delay': [np.sum, np.mean, np.median, np.std]},
            'delay_by_dist': {'D_by_D': [np.mean, np.median, np.std, len]}}
 
 stacked.groupby('delayType', axis=0).agg(agg_fun_1)
+
+stacked.groupby('Description', axis=0).agg(agg_fun_1)
 # given trip of n kilometers, what kind of delay is likely to happen
 # this excludes all trips with no delays.
 # what is happening, carrier delays are more common, but less severe.
@@ -113,31 +125,125 @@ mod_2_wd = smf.ols(formula='np.log(delayAmnt+1) ~ delayType * C(quarter) + is_mo
 res_2_wd = mod_2_wd.fit()
 print res_2_wd.summary()
 
+
 # add airline
-mod_3_wd = smf.ols(formula='np.log(delayAmnt+1) ~ delayType * C(quarter) * is_morning_dep + is_weekday_dep + C(AirlineID)', data=stacked)
-res_3_wd = mod_3_wd.fit()
-print res_3_wd.summary()
+mod_3_wd_v = smf.ols(formula='np.log(delayAmnt+1) ~ delayType * C(quarter) * is_morning_dep + is_weekday_dep + C(Description)', data=stacked)
+res_3_wd_v = mod_3_wd_v.fit()
+# correction
+pVals = res_3_wd_v.pvalues
+pVals_corr = smm.multipletests(pVals, method='fdr_bh')
+res_3_wd_v.pvalues = pVals_corr
+print res_3_wd_v.summary()
+
+log_params = res_3_wd_v.params
+
+res_3_wd_v['params'] = np.power(np.e, res_3_wd_v.params)
 
 
-# add airline interaction
-mod_3_wd = smf.ols(formula='np.log(delayAmnt+1) ~ delayType * C(quarter) * C(AirlineID) + is_morning_dep + is_weekday_dep', data=stacked)
-res_3_wd = mod_3_wd.fit()
-print res_3_wd.summary()
+# add airline
+mod_3_wd_vv = smf.ols(formula='np.log(delayAmnt+1) ~ delayType * C(quarter) * is_weekday_dep + is_morning_dep + C(Description)', data=stacked)
+res_3_wd_vv = mod_3_wd_vv.fit()
+# correction
+pVals = res_3_wd_vv.pvalues
+pVals_corr = smm.multipletests(pVals, method='fdr_bh')
+res_3_wd_vv.pvalues = pVals_corr
+print res_3_wd_vv.summary()
 
-# viz
+
+
+
+# logistic... assumption free version?
+
+
+
+
+# viz ***
+plt.figure();
+sns.set(font_scale=1.5)
+p1 = sns.distplot((stacked['delayAmnt']));
+p1.set_title('Delay Amount, all flights')
+p1.set_xlim([0, 2000])
+p1.set_xlabel('Delay (in minutes)')
+
+
+plt.figure();
+sns.set(font_scale=1.5)
+p1 = sns.distplot(stacked['delayAmnt'].loc[stacked['delayAmnt'] > 0]);
+p1.set_title('Delay Amount, delayed flights')
+p1.set_xlim([0, 2000])
+p1.set_xlabel('Delay (in minutes)')
+
+
+
+plt.figure();
+
+p1 = sns.distplot(np.log(stacked['delayAmnt'].loc[stacked['delayAmnt'] > 0]),kde=False);
+p1.set_title('Delay Amount, log transformed, delayed flights')
+#p1.set_xlim([0, 2000])
+p1.set_xlabel('Delay (in minutes) log')
+
+
 from pandas.tools.plotting import scatter_matrix
 
-cols_to_plot = ['delayAmnt', 'delayType', 'quarter', 'is_morning_dep', 'is_weekday_dep']
-scatter_matrix(stacked[cols_to_plot], alpha=0.2, figsize=(6, 6), diagonal='kde')
+cols_to_subset_for_plot = ['delayAmnt','delay_log', 'delayType', 'quarter', 'is_morning_dep', 'is_weekday_dep']
+# subset rows points, too much to plot as is
+rows = random.sample(stacked.index, 50000)
+plot_subset = stacked.loc[rows, cols_to_subset_for_plot]
+
+jitter = (np.random.rand(1, len(rows))-1)*.8
+
+plot_subset['delayType_j'] = np.transpose(pd.factorize(plot_subset['delayType'])[0] + jitter)
+plot_subset['quarter_j'] = np.transpose(np.array(plot_subset['quarter']) + jitter)
+plot_subset['is_morning_dep_j'] = np.transpose(np.array(plot_subset['is_morning_dep']) + jitter)
+plot_subset['is_weekday_dep_j'] = np.transpose(np.array(plot_subset['is_weekday_dep']) + jitter)
+plot_subset['delay_log'] = np.log(plot_subset.delayAmnt+1)
+
+
+stacked['delay_log'] = np.log(stacked.delayAmnt+1)
+cols_to_plot = ['delay_log', 'delayType', 'quarter_j', 'is_morning_dep_j', 'is_weekday_dep_j']
+scatter_matrix(plot_subset[cols_to_plot], alpha=0.2, figsize=(6, 6), diagonal='kde')
 
 
 #mod_2 = smf.ols(formula='delayAmnt ~ delayType ', data=stacked2)
 #res_2 = mod_2.fit()
 #print res_2.summary()
+plt.figure();
+bp = stacked.boxplot(column=['delay_log'], by=['delayType'])
 
-# non-biased by number of trips...
+yo = stacked['delay_log'].hist(by=stacked['delayType'], figsize=(6, 4), bins=100)
+[x[0].set_xlim([0,8]) for x in yo]
+[x[1].set_xlim([0,8]) for x in yo]
+
+q_dt_mi = [stacked['delayType'], stacked['quarter']]
+pd.MultiIndex.from_arrays(q_dt_mi)
+
+yo = stacked['delay_log'].hist(by=stacked['quarter'], figsize=(6, 4), bins=100)
+[x[0].set_xlim([0,8]) for x in yo]
+[x[1].set_xlim([0,8]) for x in yo]
 
 
+yo = stacked['delay_log'].hist(by=stacked['is_morning_dep'], figsize=(6, 4), bins=100)
+[x[0].set_xlim([0,8]) for x in yo]
+[x[1].set_xlim([0,8]) for x in yo]
+
+
+yo = stacked['delay_log'].hist(by=stacked['is_weekday_dep'], figsize=(6, 4), bins=100)
+[x[0].set_xlim([0,8]) for x in yo]
+[x[1].set_xlim([0,8]) for x in yo]
+
+
+
+# delay vs delay type, colored by quarter?
+
+#sns.pairplot(plot_subset, vars=["delay_log", "delayType"])
+plt.figure();
+#sns.swarmplot(x="delayType", y="delay_log", data=plot_subset)
+p2 = sns.stripplot(x="delayType", y="delay_log", data=plot_subset, jitter=.4, size=2, alpha = .75)
+p2.set_title('Delay amount, 50k Random subset, across delay type')
+p2.set_ylim([0,8])
+p2.set_xlim([.5,5.5])
+
+sns.stripplot(x="delayType", y="delay_log", data=plot_subset, hue="is_morning_dep_j", jitter=.4)
 
 
 
