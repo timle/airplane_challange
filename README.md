@@ -1,4 +1,4 @@
-# python script for pulling flight data from rita.dot.gov_data
+# python script for pulling flight data from rita.dot.gov
 
 get_data.py saves each year as csv
 
